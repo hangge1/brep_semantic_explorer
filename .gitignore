@@ -1,0 +1,14 @@
+node_modules/
+test-results/
+playwright-report/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+data/*_mesh.json
+data/geometry.json
+.agents/
+.claude/
+_bmad/
+_bmad-output/brainstorming/
+uploads/*
+!uploads/100106_7f144e5b_0000_0001.step

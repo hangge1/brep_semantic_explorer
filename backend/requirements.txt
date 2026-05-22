@@ -1,0 +1,4 @@
+fastapi
+gmsh
+uvicorn[standard]
+python-multipart

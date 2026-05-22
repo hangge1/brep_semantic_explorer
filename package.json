@@ -1,0 +1,21 @@
+{
+  "name": "brep_semantic_explorer",
+  "version": "1.0.0",
+  "description": "这是一个 CAD Brep 模型探索工具的原型，用于可视化交互式地探索 STEP 文件，并实现从可视化元素到原始 STEP 实体的反向追溯功能。",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "playwright test",
+    "test:ui": "playwright test tests/ui-interaction.spec.js --headed",
+    "test:ui:debug": "playwright test tests/ui-interaction.spec.js --debug"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "@playwright/test": "^1.60.0"
+  }
+}

@@ -1,0 +1,887 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>Brep Explorer</title>
+    <style>
+        :root { --sidebar-width: 320px; --panel-width: 340px; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, 'Segoe UI', sans-serif; background: #fff; height: 100vh; overflow: hidden; color: #333; }
+        .container { display: grid; grid-template-columns: var(--sidebar-width) 6px minmax(400px, 1fr) 6px var(--panel-width); height: 100vh; width: 100vw; }
+        .sidebar { min-width: 0; background: #fafafa; display: flex; flex-direction: column; border-right: 1px solid #e8e8e8; }
+        .resizer { cursor: col-resize; background: #f5f5f5; }
+        .sidebar-resizer { border-right: 1px solid #e8e8e8; }
+        .panel-resizer { border-left: 1px solid #e8e8e8; }
+        .resizer:hover, body.resizing-panel .resizer.active { background: #d0e8ff; }
+        body.resizing-panel { cursor: col-resize; user-select: none; }
+        .sidebar-header { padding: 16px; border-bottom: 1px solid #e8e8e8; }
+        .sidebar-header h2 { font-size: 11px; color: #999; margin: 0; letter-spacing: 1.5px; font-weight: 500; }
+        .sidebar-content { flex: 1; overflow: auto; padding: 8px; }
+        .main { min-width: 0; display: flex; flex-direction: column; }
+        .toolbar { background: #fff; padding: 8px 16px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid #e8e8e8; }
+        .toolbar h1 { font-size: 14px; color: #333; flex: 1; font-weight: 600; }
+        .toolbar-btn { background: #fff; border: 1px solid #ddd; color: #555; padding: 5px 14px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+        .toolbar-btn:hover { background: #f5f5f5; border-color: #bbb; }
+        .toolbar-btn.active { background: #333; color: #fff; border-color: #333; }
+        .viewer { flex: 1; position: relative; background: #f0f0f0; }
+        #canvas { width: 100%; height: 100%; display: block; }
+        .panel { min-width: 0; background: #fff; border-left: 1px solid #e8e8e8; overflow-y: auto; padding: 16px; }
+        .panel > h2 { font-size: 11px; color: #999; margin-bottom: 16px; letter-spacing: 1.5px; font-weight: 500; }
+        .info-block { padding: 12px 0; border-bottom: 1px solid #f0f0f0; margin-bottom: 12px; }
+        .info-block h2 { font-size: 11px; color: #999; margin-bottom: 8px; padding: 0; border: none; letter-spacing: 1px; font-weight: 500; }
+        .info-row { display: flex; margin-bottom: 6px; font-size: 13px; }
+        .info-label { width: 80px; color: #999; font-size: 12px; }
+        .info-value { flex: 1; color: #333; font-size: 12px; }
+        .code-block { background: #f8f8f8; color: #333; padding: 12px; border-radius: 4px; font-family: 'SF Mono', 'Cascadia Code', monospace; font-size: 11px; white-space: pre-wrap; word-break: break-all; max-height: 180px; overflow-y: auto; border: 1px solid #e8e8e8; }
+        .ref-item { padding: 8px 10px; margin-bottom: 4px; border-radius: 4px; cursor: pointer; font-size: 12px; border: 1px solid #e8e8e8; background: #fafafa; }
+        .ref-item:hover { border-color: #4a90d9; background: #f0f7ff; }
+        .face-list { max-height: 100%; overflow-y: auto; }
+        .face-item { padding: 10px 12px; margin-bottom: 2px; border-radius: 4px; cursor: pointer; border: 1px solid transparent; }
+        .face-item:hover { background: #f0f7ff; }
+        .face-item.selected { background: #e8f4fd; border-color: #4a90d9; }
+        .face-id { color: #333; font-weight: 500; font-size: 12px; }
+        .face-type { color: #999; font-size: 11px; margin-top: 2px; }
+        .status { font-size: 12px; color: #999; font-weight: 400; }
+        .hint { position: absolute; bottom: 12px; left: 12px; background: rgba(255,255,255,0.9); padding: 6px 10px; border-radius: 4px; font-size: 11px; color: #999; border: 1px solid #e8e8e8; }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #ddd; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #bbb; }
+        .topo-tree { font-size: 12px; user-select: none; min-width: max-content; }
+        .tree-node { padding-left: 16px; }
+        .tree-item { display: flex; align-items: center; width: max-content; min-width: 100%; padding: 4px 8px; border-radius: 3px; cursor: pointer; gap: 4px; }
+        .tree-item:hover { background: #f0f0f0; }
+        .tree-item.selected { background: #d0e8ff; border-left: 3px solid #2979ff; }
+        .tree-item.highlighted { background: #fff3e0; border-left: 3px solid #f0a050; }
+        .tree-toggle { width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; color: #999; font-size: 10px; flex-shrink: 0; }
+        .tree-icon { width: 16px; text-align: center; flex-shrink: 0; font-size: 11px; }
+        .tree-label { white-space: nowrap; color: #333; font-size: 12px; }
+        .tree-node.collapsed > .tree-children { display: none; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <div class="sidebar">
+        <div class="sidebar-header">
+            <h2>TOPOLOGY</h2>
+            <input type="file" id="fileInput" accept=".step,.stp" style="display:none">
+            <button class="toolbar-btn" style="width:100%;margin-top:8px" onclick="document.getElementById('fileInput').click()">Open STEP File</button>
+        </div>
+        <div class="sidebar-content">
+            <div id="topoTree" class="topo-tree"></div>
+        </div>
+    </div>
+    <div class="resizer sidebar-resizer" id="sidebarResizer"></div>
+    <div class="main">
+        <div class="toolbar">
+            <h1>Brep Explorer</h1>
+            <span class="status" id="status">Loading...</span>
+            <button class="toolbar-btn active" id="btnFaces">Faces</button>
+            <button class="toolbar-btn active" id="btnEdges">Edges</button>
+            <button class="toolbar-btn" id="btnWireframe">Wireframe</button>
+            <button class="toolbar-btn" id="btnReset">Reset</button>
+        </div>
+        <div class="viewer">
+            <canvas id="canvas"></canvas>
+            <canvas id="axisCanvas" width="120" height="120" style="position:absolute;bottom:12px;right:12px;pointer-events:none;"></canvas>
+            <div class="hint">Left drag: Rotate | Scroll: Zoom | Right drag: Pan | Click: Select face</div>
+        </div>
+    </div>
+    <div class="resizer panel-resizer" id="panelResizer"></div>
+    <div class="panel">
+        <h2>PROPERTIES</h2>
+        <div id="propContent"><p style="color:#666">Click a face to inspect</p></div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/TrackballControls.js"></script>
+<script>
+let scene, camera, renderer, controls;
+let faceGroup, edgeGroup;
+let meshData = null;
+let selectedFaceIdx = -1;
+let raycaster = new THREE.Raycaster();
+let mouse = new THREE.Vector2();
+let showFaces = true, showEdges = true, wireframeMode = false;
+const FACE_BASE_COLOR = 0x6b9dad;
+const FACE_HIGHLIGHT_COLOR = 0xf0a050;
+const FACE_HIGHLIGHT_EMISSIVE = 0x201000;
+const CLICK_DRAG_TOLERANCE_PX = 4;
+const MIN_SIDEBAR_WIDTH = 220;
+const MIN_PANEL_WIDTH = 260;
+const MIN_VIEWER_WIDTH = 400;
+const TOTAL_RESIZER_WIDTH = 12;
+let pointerDownPos = null;
+
+// Init Three.js
+function init() {
+    const canvas = document.getElementById('canvas');
+    initPanelResizing();
+    scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xf5f5f5);
+
+    camera = new THREE.PerspectiveCamera(50, canvas.clientWidth / canvas.clientHeight, 0.1, 10000);
+    renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    renderer.setPixelRatio(window.devicePixelRatio);
+
+    controls = new THREE.TrackballControls(camera, canvas);
+    controls.rotateSpeed = 3.0;
+    controls.zoomSpeed = 1.2;
+    controls.panSpeed = 0.8;
+    controls.staticMoving = false;
+    controls.dynamicDampingFactor = 0.08;
+    resizeRendererToViewer();
+
+    // Lighting
+    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+    scene.add(new THREE.HemisphereLight(0xffffff, 0xe0e0e0, 0.4));
+    const dir = new THREE.DirectionalLight(0xffffff, 0.5);
+    dir.position.set(1, 2, 1.5);
+    scene.add(dir);
+    const dir2 = new THREE.DirectionalLight(0xffffff, 0.2);
+    dir2.position.set(-1, -0.5, -1);
+    scene.add(dir2);
+
+    faceGroup = new THREE.Group();
+    edgeGroup = new THREE.Group();
+    scene.add(faceGroup);
+    scene.add(edgeGroup);
+
+    // World axes in scene
+    const axesHelper = new THREE.AxesHelper(1000);
+    axesHelper.material.depthTest = false;
+    axesHelper.renderOrder = 1;
+    scene.add(axesHelper);
+
+    canvas.addEventListener('pointerdown', onPointerDown);
+    canvas.addEventListener('pointerup', onPointerUp);
+    window.addEventListener('resize', onResize);
+    animate();
+}
+
+function initPanelResizing() {
+    const sidebarResizer = document.getElementById('sidebarResizer');
+    const panelResizer = document.getElementById('panelResizer');
+    const savedSidebarWidth = Number(localStorage.getItem('brepExplorerSidebarWidth'));
+    const savedPanelWidth = Number(localStorage.getItem('brepExplorerPanelWidth'));
+
+    if (savedPanelWidth) {
+        const width = clampPanelWidth(savedPanelWidth);
+        setPanelWidth(width);
+        localStorage.setItem('brepExplorerPanelWidth', String(width));
+    }
+
+    if (savedSidebarWidth) {
+        const width = clampSidebarWidth(savedSidebarWidth);
+        setSidebarWidth(width);
+        localStorage.setItem('brepExplorerSidebarWidth', String(width));
+    }
+
+    normalizePanelWidths();
+
+    sidebarResizer.addEventListener('pointerdown', (event) => {
+        event.preventDefault();
+        sidebarResizer.classList.add('active');
+        sidebarResizer.setPointerCapture(event.pointerId);
+        document.body.classList.add('resizing-panel');
+    });
+
+    sidebarResizer.addEventListener('pointermove', (event) => {
+        if (!sidebarResizer.classList.contains('active')) return;
+
+        const width = clampSidebarWidth(event.clientX);
+        setSidebarWidth(width);
+        localStorage.setItem('brepExplorerSidebarWidth', String(width));
+        onResize();
+    });
+
+    sidebarResizer.addEventListener('pointerup', (event) => {
+        sidebarResizer.classList.remove('active');
+        document.body.classList.remove('resizing-panel');
+        sidebarResizer.releasePointerCapture(event.pointerId);
+        onResize();
+    });
+
+    sidebarResizer.addEventListener('pointercancel', () => {
+        sidebarResizer.classList.remove('active');
+        document.body.classList.remove('resizing-panel');
+        onResize();
+    });
+
+    panelResizer.addEventListener('pointerdown', (event) => {
+        event.preventDefault();
+        panelResizer.classList.add('active');
+        panelResizer.setPointerCapture(event.pointerId);
+        document.body.classList.add('resizing-panel');
+    });
+
+    panelResizer.addEventListener('pointermove', (event) => {
+        if (!panelResizer.classList.contains('active')) return;
+
+        const width = clampPanelWidth(window.innerWidth - event.clientX);
+        setPanelWidth(width);
+        localStorage.setItem('brepExplorerPanelWidth', String(width));
+        onResize();
+    });
+
+    panelResizer.addEventListener('pointerup', (event) => {
+        panelResizer.classList.remove('active');
+        document.body.classList.remove('resizing-panel');
+        panelResizer.releasePointerCapture(event.pointerId);
+        onResize();
+    });
+
+    panelResizer.addEventListener('pointercancel', () => {
+        panelResizer.classList.remove('active');
+        document.body.classList.remove('resizing-panel');
+        onResize();
+    });
+}
+
+function setSidebarWidth(width) {
+    document.documentElement.style.setProperty('--sidebar-width', `${width}px`);
+}
+
+function setPanelWidth(width) {
+    document.documentElement.style.setProperty('--panel-width', `${width}px`);
+}
+
+function getSidebarWidth() {
+    return document.querySelector('.sidebar')?.getBoundingClientRect().width || 320;
+}
+
+function getPanelWidth() {
+    return document.querySelector('.panel')?.getBoundingClientRect().width || 340;
+}
+
+function clampSidebarWidth(width, panelWidth = getPanelWidth()) {
+    const maxWidth = Math.max(
+        MIN_SIDEBAR_WIDTH,
+        window.innerWidth - MIN_VIEWER_WIDTH - panelWidth - TOTAL_RESIZER_WIDTH
+    );
+    return Math.min(Math.max(width, MIN_SIDEBAR_WIDTH), maxWidth);
+}
+
+function clampPanelWidth(width, sidebarWidth = getSidebarWidth()) {
+    const maxWidth = Math.max(
+        MIN_PANEL_WIDTH,
+        window.innerWidth - MIN_VIEWER_WIDTH - sidebarWidth - TOTAL_RESIZER_WIDTH
+    );
+    return Math.min(Math.max(width, MIN_PANEL_WIDTH), maxWidth);
+}
+
+function animate() {
+    requestAnimationFrame(animate);
+    controls.update();
+    renderer.render(scene, camera);
+    drawAxisIndicator();
+}
+
+function drawAxisIndicator() {
+    const canvas = document.getElementById('axisCanvas');
+    const ctx = canvas.getContext('2d');
+    const w = canvas.width, h = canvas.height;
+    const cx = w / 2, cy = h / 2;
+    const len = 40;
+
+    ctx.clearRect(0, 0, w, h);
+
+    // Get camera rotation
+    const dir = new THREE.Vector3();
+    camera.getWorldDirection(dir);
+    const up = camera.up.clone();
+    const right = new THREE.Vector3().crossVectors(dir, up).normalize();
+    const camUp = new THREE.Vector3().crossVectors(right, dir).normalize();
+
+    // Project axes
+    const axes = [
+        { v: new THREE.Vector3(1, 0, 0), color: '#e74c3c', label: 'X' },
+        { v: new THREE.Vector3(0, 1, 0), color: '#2ecc71', label: 'Y' },
+        { v: new THREE.Vector3(0, 0, 1), color: '#3498db', label: 'Z' }
+    ];
+
+    // Sort by depth for correct draw order
+    axes.forEach(a => { a.depth = a.v.dot(dir); });
+    axes.sort((a, b) => a.depth - b.depth);
+
+    axes.forEach(axis => {
+        const px = axis.v.dot(right) * len;
+        const py = -axis.v.dot(camUp) * len;
+
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(cx + px, cy + py);
+        ctx.strokeStyle = axis.color;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // Label
+        ctx.font = 'bold 11px sans-serif';
+        ctx.fillStyle = axis.color;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(axis.label, cx + px * 1.2, cy + py * 1.2);
+    });
+}
+
+function onResize() {
+    normalizePanelWidths();
+    resizeRendererToViewer();
+}
+
+function resizeRendererToViewer() {
+    const viewer = document.querySelector('.viewer');
+    const width = Math.max(1, viewer.clientWidth);
+    const height = Math.max(1, viewer.clientHeight);
+
+    camera.aspect = width / height;
+    camera.updateProjectionMatrix();
+    renderer.setSize(width, height, false);
+    if (controls && controls.handleResize) {
+        controls.handleResize();
+    }
+}
+
+function normalizePanelWidths() {
+    let panelWidth = clampPanelWidth(getPanelWidth(), getSidebarWidth());
+    setPanelWidth(panelWidth);
+
+    const sidebarWidth = clampSidebarWidth(getSidebarWidth(), panelWidth);
+    setSidebarWidth(sidebarWidth);
+
+    panelWidth = clampPanelWidth(panelWidth, sidebarWidth);
+    setPanelWidth(panelWidth);
+
+    localStorage.setItem('brepExplorerSidebarWidth', String(sidebarWidth));
+    localStorage.setItem('brepExplorerPanelWidth', String(panelWidth));
+}
+
+// Load mesh data from API
+async function loadMesh() {
+    const resp = await fetch('/api/mesh');
+    meshData = await resp.json();
+
+    if (meshData.error) {
+        document.getElementById('status').textContent = meshData.error;
+        return;
+    }
+
+    // Clear old scene
+    while (faceGroup.children.length) {
+        const c = faceGroup.children[0];
+        faceGroup.remove(c);
+        c.geometry.dispose();
+        c.material.dispose();
+    }
+    while (edgeGroup.children.length) {
+        const c = edgeGroup.children[0];
+        edgeGroup.remove(c);
+        c.geometry.dispose();
+        c.material.dispose();
+    }
+    selectedFaceIdx = -1;
+
+    buildScene(meshData);
+    buildFaceList(meshData);
+    document.getElementById('status').textContent =
+        `${meshData.filename || ''} | ${meshData.statistics.face_count} faces | ${meshData.statistics.triangle_count} tris`;
+}
+
+function buildScene(data) {
+    const verts = data.vertices;
+    const bbox = data.bbox;
+    const cx = bbox.center[0], cy = bbox.center[1], cz = bbox.center[2];
+    const maxDim = Math.max(...bbox.size);
+
+    // Build faces
+    data.faces.forEach((face, idx) => {
+        if (face.triangles.length === 0) return;
+
+        const geom = new THREE.BufferGeometry();
+        const positions = [];
+
+        face.triangles.forEach(tri => {
+            for (const vi of tri) {
+                positions.push(verts[vi][0] - cx, verts[vi][1] - cy, verts[vi][2] - cz);
+            }
+        });
+
+        geom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+        geom.computeVertexNormals();
+
+        const mat = new THREE.MeshPhongMaterial({
+            color: FACE_BASE_COLOR,
+            side: THREE.DoubleSide,
+            flatShading: false,
+            shininess: 40
+        });
+
+        const mesh = new THREE.Mesh(geom, mat);
+        mesh.userData = { faceIdx: idx, faceId: face.id };
+        faceGroup.add(mesh);
+    });
+
+    // Build edges
+    data.edges.forEach((edge, idx) => {
+        if (edge.points.length < 2) return;
+
+        const points = edge.points.map(p =>
+            new THREE.Vector3(p[0] - cx, p[1] - cy, p[2] - cz)
+        );
+
+        const geom = new THREE.BufferGeometry().setFromPoints(points);
+        const mat = new THREE.LineBasicMaterial({ color: 0x333333, linewidth: 1 });
+        const line = new THREE.Line(geom, mat);
+        line.userData = { edgeIdx: idx, edgeId: edge.id };
+        edgeGroup.add(line);
+    });
+
+    // Camera
+    const dist = maxDim * 1.8;
+    camera.position.set(dist * 0.8, dist * 0.6, dist);
+    controls.target.set(0, 0, 0);
+    controls.update();
+}
+
+function buildFaceList(data) {
+    // Load topology tree
+    loadTopologyTree();
+}
+
+async function loadTopologyTree() {
+    const resp = await fetch('/api/topology');
+    const tree = await resp.json();
+    const container = document.getElementById('topoTree');
+
+    if (tree.error) {
+        container.innerHTML = '<p style="color:#999;padding:12px">No topology data</p>';
+        return;
+    }
+
+    container.innerHTML = '';
+    tree.forEach(node => container.appendChild(buildTreeNode(node)));
+}
+
+function buildTreeNode(node) {
+    const div = document.createElement('div');
+    div.className = 'tree-node';
+
+    const hasChildren = node.children && node.children.length > 0;
+
+    const item = document.createElement('div');
+    item.className = 'tree-item';
+    item.dataset.entityId = node.id;
+    item.dataset.type = node.type;
+    if (node.mesh_index !== undefined) item.dataset.meshIndex = node.mesh_index;
+
+    // Toggle arrow
+    const toggle = document.createElement('span');
+    toggle.className = 'tree-toggle';
+    toggle.textContent = hasChildren ? '▼' : '';
+    item.appendChild(toggle);
+
+    // Icon
+    const icon = document.createElement('span');
+    icon.className = 'tree-icon';
+    if (node.type === 'SOLID') icon.textContent = '■';
+    else if (node.type === 'SHELL') icon.textContent = '□';
+    else if (node.type === 'FACE') icon.textContent = '◆';
+    else if (node.type === 'EDGE_LOOP') icon.textContent = '○';
+    else if (node.type === 'EDGE') icon.textContent = '—';
+    item.appendChild(icon);
+
+    // Label
+    const label = document.createElement('span');
+    label.className = 'tree-label';
+    label.textContent = node.label;
+    item.appendChild(label);
+
+    div.appendChild(item);
+
+    // Click handler
+    item.addEventListener('click', (e) => {
+        e.stopPropagation();
+
+        // Toggle collapse
+        if (hasChildren && e.target === toggle) {
+            div.classList.toggle('collapsed');
+            toggle.textContent = div.classList.contains('collapsed') ? '▶' : '▼';
+            return;
+        }
+
+        // Select
+        document.querySelectorAll('.tree-item.selected').forEach(el => el.classList.remove('selected'));
+        item.classList.add('selected');
+
+        // Highlight in 3D based on type
+        if (node.type === 'FACE' && node.mesh_index >= 0) {
+            selectFace(node.mesh_index);
+        } else if (node.type === 'EDGE') {
+            highlightEdgeById(node.id);
+            fetchEntity(node.id);
+        } else if (node.type === 'EDGE_LOOP') {
+            const edgeIds = (node.children || []).filter(c => c.type === 'EDGE').map(c => c.id);
+            highlightMultipleEdges(edgeIds);
+            fetchEntity(node.id);
+        } else if (node.type === 'SHELL' || node.type === 'SOLID') {
+            const faceIndices = [];
+            (function collectFaces(n) {
+                if (n.type === 'FACE' && n.mesh_index >= 0) faceIndices.push(n.mesh_index);
+                (n.children || []).forEach(collectFaces);
+            })(node);
+            highlightMultipleFaces(faceIndices);
+            fetchEntity(node.id);
+        } else {
+            clearHighlight();
+            fetchEntity(node.id);
+        }
+    });
+
+    // Children
+    if (hasChildren) {
+        const childContainer = document.createElement('div');
+        childContainer.className = 'tree-children';
+        node.children.forEach(child => childContainer.appendChild(buildTreeNode(child)));
+        div.appendChild(childContainer);
+    }
+
+    return div;
+}
+
+function highlightTreeNode(entityId) {
+    document.querySelectorAll('.tree-item.highlighted').forEach(el => el.classList.remove('highlighted'));
+    const item = document.querySelector(`.tree-item[data-entity-id="${entityId}"]`);
+    if (item) {
+        item.classList.add('highlighted');
+        item.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+
+        // Expand parents
+        let parent = item.parentElement;
+        while (parent) {
+            if (parent.classList.contains('tree-node') && parent.classList.contains('collapsed')) {
+                parent.classList.remove('collapsed');
+                const t = parent.querySelector(':scope > .tree-item .tree-toggle');
+                if (t) t.textContent = '▼';
+            }
+            parent = parent.parentElement;
+        }
+    }
+}
+
+// Click selection
+function onPointerDown(event) {
+    if (event.button !== 0) {
+        pointerDownPos = null;
+        return;
+    }
+
+    pointerDownPos = { x: event.clientX, y: event.clientY };
+}
+
+function onPointerUp(event) {
+    if (event.button !== 0 || !pointerDownPos) {
+        pointerDownPos = null;
+        return;
+    }
+
+    const dx = event.clientX - pointerDownPos.x;
+    const dy = event.clientY - pointerDownPos.y;
+    pointerDownPos = null;
+
+    if (Math.hypot(dx, dy) > CLICK_DRAG_TOLERANCE_PX) {
+        return;
+    }
+
+    selectAtCanvasPoint(event);
+}
+
+function selectAtCanvasPoint(event) {
+    const canvas = document.getElementById('canvas');
+    const rect = canvas.getBoundingClientRect();
+    mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+    raycaster.setFromCamera(mouse, camera);
+
+    // Try edges first (with larger threshold)
+    raycaster.params.Line = { threshold: 0.5 };
+    let intersects = raycaster.intersectObjects(edgeGroup.children.filter(c => c.name !== '_highlight'));
+
+    if (intersects.length > 0) {
+        const edgeIdx = intersects[0].object.userData.edgeIdx;
+        if (edgeIdx !== undefined && meshData.edges[edgeIdx]) {
+            const stepId = meshData.edges[edgeIdx].step_entity_id;
+            if (stepId) {
+                highlightEdgeById(stepId);
+                fetchEntity(stepId);
+                // Select in tree
+                document.querySelectorAll('.tree-item.selected').forEach(el => el.classList.remove('selected'));
+                const treeItem = document.querySelector(`.tree-item[data-entity-id="${stepId}"]`);
+                if (treeItem) {
+                    treeItem.classList.add('selected');
+                    treeItem.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+                }
+                return;
+            }
+        }
+    }
+
+    // Then try faces
+    intersects = raycaster.intersectObjects(faceGroup.children);
+    if (intersects.length > 0) {
+        const idx = intersects[0].object.userData.faceIdx;
+        selectFace(idx);
+    }
+}
+
+function selectFace(idx) {
+    clearHighlight();
+
+    selectedFaceIdx = idx;
+
+    // Highlight
+    if (idx < faceGroup.children.length) {
+        faceGroup.children[idx].material.color.setHex(FACE_HIGHLIGHT_COLOR);
+        faceGroup.children[idx].material.emissive.setHex(FACE_HIGHLIGHT_EMISSIVE);
+    }
+
+    // Update sidebar - highlight tree node
+    document.querySelectorAll('.tree-item.selected').forEach(el => el.classList.remove('selected'));
+    const face = meshData.faces[idx];
+    if (face && face.step_entity_id) {
+        const treeItem = document.querySelector(`.tree-item[data-entity-id="${face.step_entity_id}"]`);
+        if (treeItem) {
+            treeItem.classList.add('selected');
+            treeItem.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            // Expand parents
+            let parent = treeItem.parentElement;
+            while (parent) {
+                if (parent.classList.contains('tree-node') && parent.classList.contains('collapsed')) {
+                    parent.classList.remove('collapsed');
+                    const t = parent.querySelector(':scope > .tree-item .tree-toggle');
+                    if (t) t.textContent = '▼';
+                }
+                parent = parent.parentElement;
+            }
+        }
+    }
+
+    // Show properties
+    showFaceProperties(idx);
+}
+
+async function showFaceProperties(idx) {
+    const face = meshData.faces[idx];
+    const panel = document.getElementById('propContent');
+
+    let stepInfo = '';
+    if (face.step_entity_id) {
+        // Fetch full entity info
+        const resp = await fetch(`/api/entity/${face.step_entity_id}`);
+        const entity = await resp.json();
+
+        const refs = (entity.referenced_entities || []).map(ref =>
+            `<div class="ref-item" onclick="fetchEntity(${ref.entity_id})">
+                <strong>#${ref.entity_id}</strong> - ${ref.entity_type}
+            </div>`
+        ).join('');
+
+        const refBy = (entity.referencing_entities || []).map(ref =>
+            `<div class="ref-item" onclick="fetchEntity(${ref.entity_id})">
+                <strong>#${ref.entity_id}</strong> - ${ref.entity_type}
+            </div>`
+        ).join('');
+
+        stepInfo = `
+            <div class="info-block">
+                <h2>STEP ENTITY</h2>
+                <div class="info-row"><div class="info-label">Entity ID</div><div class="info-value">#${entity.entity_id}</div></div>
+                <div class="info-row"><div class="info-label">Type</div><div class="info-value">${entity.entity_type}</div></div>
+                <div class="info-row"><div class="info-label">Line</div><div class="info-value">${entity.line_number}</div></div>
+            </div>
+            <div class="info-block">
+                <h2>RAW STEP TEXT</h2>
+                <div class="code-block">${entity.raw_text}</div>
+            </div>
+            <div class="info-block">
+                <h2>REFERENCES (${(entity.referenced_entities||[]).length})</h2>
+                ${refs || '<p style="color:#666">None</p>'}
+            </div>
+            <div class="info-block">
+                <h2>REFERENCED BY (${(entity.referencing_entities||[]).length})</h2>
+                ${refBy || '<p style="color:#666">None</p>'}
+            </div>
+        `;
+    }
+
+    panel.innerHTML = `
+        <div class="info-block">
+            <h2>FACE INFO</h2>
+            <div class="info-row"><div class="info-label">Face ID</div><div class="info-value">${face.id}</div></div>
+            <div class="info-row"><div class="info-label">Surface</div><div class="info-value">${face.surface_type}</div></div>
+            <div class="info-row"><div class="info-label">Triangles</div><div class="info-value">${face.triangles.length}</div></div>
+            ${face.step_entity_id ? `<div class="info-row"><div class="info-label">STEP ID</div><div class="info-value">#${face.step_entity_id}</div></div>` : ''}
+        </div>
+        ${stepInfo}
+    `;
+}
+
+async function fetchEntity(entityId) {
+    const resp = await fetch(`/api/entity/${entityId}`);
+    const entity = await resp.json();
+
+    const refs = (entity.referenced_entities || []).map(ref =>
+        `<div class="ref-item" onclick="fetchEntity(${ref.entity_id})">
+            <strong>#${ref.entity_id}</strong> - ${ref.entity_type}
+        </div>`
+    ).join('');
+
+    document.getElementById('propContent').innerHTML = `
+        <div class="info-block">
+            <h2>ENTITY #${entity.entity_id}</h2>
+            <div class="info-row"><div class="info-label">Type</div><div class="info-value">${entity.entity_type}</div></div>
+            <div class="info-row"><div class="info-label">Line</div><div class="info-value">${entity.line_number}</div></div>
+        </div>
+        <div class="info-block">
+            <h2>RAW STEP TEXT</h2>
+            <div class="code-block">${entity.raw_text}</div>
+        </div>
+        <div class="info-block">
+            <h2>REFERENCES</h2>
+            ${refs || '<p style="color:#666">None</p>'}
+        </div>
+    `;
+}
+
+function highlightMultipleFaces(indices) {
+    clearHighlight();
+    const idxSet = new Set(indices);
+    faceGroup.children.forEach((m, i) => {
+        if (idxSet.has(i)) {
+            m.material.color.setHex(FACE_HIGHLIGHT_COLOR);
+            m.material.emissive.setHex(FACE_HIGHLIGHT_EMISSIVE);
+        } else {
+            m.material.opacity = 0.2;
+            m.material.transparent = true;
+        }
+    });
+}
+
+function highlightMultipleEdges(stepEntityIds) {
+    resetFaceMaterials();
+    selectedFaceIdx = -1;
+
+    scene.children.filter(c => c.name === '_edgeTube').forEach(c => {
+        scene.remove(c); c.geometry.dispose(); c.material.dispose();
+    });
+
+    edgeGroup.children.forEach(line => { line.material.color.setHex(0x333333); });
+    faceGroup.children.forEach(m => { m.material.opacity = 0.15; m.material.transparent = true; });
+
+    if (meshData && meshData.edges) {
+        const idSet = new Set(stepEntityIds);
+        const center = meshData.bbox.center;
+        const maxDim = Math.max(...meshData.bbox.size);
+        const tubeRadius = maxDim * 0.004;
+
+        for (let i = 0; i < meshData.edges.length; i++) {
+            if (idSet.has(meshData.edges[i].step_entity_id) && meshData.edges[i].points) {
+                const pts = meshData.edges[i].points;
+                if (pts.length < 2) continue;
+
+                const vectors = pts.map(p => new THREE.Vector3(p[0] - center[0], p[1] - center[1], p[2] - center[2]));
+                const curve = vectors.length === 2
+                    ? new THREE.LineCurve3(vectors[0], vectors[1])
+                    : new THREE.CatmullRomCurve3(vectors);
+
+                const tubeGeom = new THREE.TubeGeometry(curve, Math.max(pts.length * 4, 32), tubeRadius, 8, false);
+                const tubeMat = new THREE.MeshBasicMaterial({ color: 0xff3300 });
+                const tube = new THREE.Mesh(tubeGeom, tubeMat);
+                tube.name = '_edgeTube';
+                scene.add(tube);
+            }
+        }
+    }
+}
+
+function highlightEdgeById(stepEntityId) {
+    highlightMultipleEdges([stepEntityId]);
+}
+
+function resetFaceMaterials() {
+    faceGroup.children.forEach(m => { m.material.opacity = 1; m.material.transparent = false; });
+    faceGroup.children.forEach(m => {
+        m.material.color.setHex(FACE_BASE_COLOR);
+        m.material.emissive.setHex(0x000000);
+    });
+}
+
+function clearHighlight() {
+    selectedFaceIdx = -1;
+
+    scene.children.filter(c => c.name === '_edgeTube').forEach(c => {
+        scene.remove(c); c.geometry.dispose(); c.material.dispose();
+    });
+
+    edgeGroup.children.forEach(line => { line.material.color.setHex(0x333333); });
+    resetFaceMaterials();
+}
+
+// Toolbar buttons
+document.getElementById('btnFaces').onclick = function() {
+    showFaces = !showFaces;
+    faceGroup.visible = showFaces;
+    this.classList.toggle('active', showFaces);
+};
+document.getElementById('btnEdges').onclick = function() {
+    showEdges = !showEdges;
+    edgeGroup.visible = showEdges;
+    this.classList.toggle('active', showEdges);
+};
+document.getElementById('btnWireframe').onclick = function() {
+    wireframeMode = !wireframeMode;
+    this.classList.toggle('active', wireframeMode);
+    faceGroup.children.forEach(m => { m.material.wireframe = wireframeMode; });
+};
+document.getElementById('btnReset').onclick = function() {
+    if (!meshData) return;
+    const maxDim = Math.max(...meshData.bbox.size);
+    const dist = maxDim * 1.8;
+    camera.position.set(dist * 0.8, dist * 0.6, dist);
+    controls.target.set(0, 0, 0);
+    controls.update();
+};
+
+// File upload
+document.getElementById('fileInput').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    document.getElementById('status').textContent = 'Uploading & meshing...';
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+        const resp = await fetch('/api/upload', { method: 'POST', body: formData });
+        const result = await resp.json();
+
+        if (result.error) {
+            document.getElementById('status').textContent = 'Error: ' + result.error;
+            return;
+        }
+
+        // Reload mesh
+        await loadMesh();
+    } catch (err) {
+        document.getElementById('status').textContent = 'Upload failed: ' + err.message;
+    }
+});
+
+// Start
+init();
+loadMesh();
+</script>
+</body>
+</html>
